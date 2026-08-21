@@ -133,8 +133,22 @@ mikrofon → Whisper large-v3 (lokálně, 1,58 s) → regex čistička (0 s)
          → Haiku 4.5 (1,93 s) → vložený text
 ```
 
-**3,5 s od puštění klávesy po text · ~$3,25 měsíčně** (Wispr Flow stojí $12–15).
+### Latence po nasazení démona
 
-Zbývá k optimalizaci: 3,5 s je u krátkého diktátu („ano, díky") citelné.
-Kandidáti — kratší systémový prompt, prompt caching, nebo přeskočit LLM
-u velmi krátkých vstupů.
+Přepis běží **během mluvení** po ~10s kouscích, takže po puštění klávesy
+zbývá jen poslední kousek. Naměřeno end-to-end proti běžícímu démonovi:
+
+| délka diktátu | po puštění klávesy | cena |
+|---|---|---|
+| 10 s | **1,40 s** | $0,0014 |
+| 20 s | **1,33 s** | $0,0018 |
+| 45 s | **2,42 s** | $0,0026 |
+
+Bez chunkingu to bylo 3,5 s (20 s) a 5,7 s (45 s).
+
+Prompt caching se **nevyplatil na rychlost** — TTFT je 0,81 s, ale generování
+odpovědi 1,67 s, takže cache ušetří 0,1 s. Nasazuje se kvůli ceně (−43 %).
+
+Zbývající latenci drží generování LLM. Dál by šlo: nechat model vracet jen
+seznam oprav místo celého textu, nebo vložit text z ASR okamžitě a tiše ho
+přepsat, až dorazí verze z LLM.
