@@ -5,37 +5,97 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let hotkey = HotkeyMonitor()
     private let recorder = Recorder()
     private let hud = RecordingHUD()
+    private let setup = SetupWindow()
     private var daemon = DaemonClient()
     private var sessionID: String?
     private var micName = "—"
     private var lastLine = "Připraveno"
     private var busy = false
     private var config = Config()
+    private var hotkeyArmed = false
+    private var needsPermission = false
+    private var permissionWatch: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Config.writeDefault()
         config = Config.load()
         statusItem = NSStatusItem.buildStatusItem()
         render(.idle)
-        buildMenu()
+        if CommandLine.arguments.contains("--diagnose") {
+            FileHandle.standardError.write("""
+            statusItem \(statusItem != nil), button \(statusItem.button != nil), \
+            image \(statusItem.button?.image != nil), visible \(statusItem.isVisible), \
+            accessibility \(HotkeyMonitor.hasAccessibilityPermission(prompt: false))
 
-        guard HotkeyMonitor.hasAccessibilityPermission(prompt: true) else {
-            lastLine = "Chybí oprávnění Accessibility"
-            alert("Chybí oprávnění",
-                  "Povol Dictate v System Settings → Privacy & Security → Accessibility, "
-                  + "pak appku spusť znovu.")
-            return
+            """.data(using: .utf8)!)
         }
+
         hotkey.key = config.key
-        guard hotkey.start() else {
-            lastLine = "Nepodařilo se zachytit klávesu"
-            return
-        }
         hotkey.onPress = { [weak self] in self?.beginDictation() }
         hotkey.onRelease = { [weak self] in self?.endDictation() }
 
         if let mic = MicPicker.pick() { micName = mic.name }
+        setup.onGrantClicked = { [weak self] in self?.requestPermission() }
+        armHotkey()
         buildMenu()
+
+        // Okno se ukáže, jen když něco chybí. Když je vše v pořádku, appka
+        // tiše sedí v liště a neotravuje.
+        if needsPermission {
+            setup.show(needsPermission: true, hotkeyLabel: hotkeyLabel, mic: micName)
+        }
+    }
+
+    private var hotkeyLabel: String {
+        (config.key == .leftOption ? "levý" : "pravý") + " ⌥"
+    }
+
+    /// Zkusí zapnout odchyt klávesy. Když chybí oprávnění, NEBLOKUJE —
+    /// jen si o ně řekne a dál sleduje, jestli je uživatel neudělil.
+    ///
+    /// Modální dialog by tady byl fatální: aplikace bez Docku se s ním
+    /// zasekne, ikonka se nevykreslí a navenek to vypadá, že nedělá nic.
+    private func armHotkey() {
+        guard !hotkeyArmed else { return }
+
+        guard HotkeyMonitor.hasAccessibilityPermission(prompt: false) else {
+            needsPermission = true
+            lastLine = "Chybí oprávnění Accessibility"
+            render(.error)
+            startPermissionWatch()
+            buildMenu()
+            return
+        }
+        guard hotkey.start() else {
+            lastLine = "Odchyt klávesy se nezdařil"
+            render(.error)
+            buildMenu()
+            return
+        }
+        hotkeyArmed = true
+        needsPermission = false
+        permissionWatch?.invalidate()
+        permissionWatch = nil
+        lastLine = "Připraveno"
+        render(.idle)
+        buildMenu()
+        setup.refresh(needsPermission: false, hotkeyLabel: hotkeyLabel, mic: micName)
+    }
+
+    /// Po udělení oprávnění se appka rozjede sama, bez restartu.
+    private func startPermissionWatch() {
+        guard permissionWatch == nil else { return }
+        permissionWatch = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            if HotkeyMonitor.hasAccessibilityPermission(prompt: false) { armHotkey() }
+        }
+    }
+
+    @objc private func requestPermission() {
+        _ = HotkeyMonitor.hasAccessibilityPermission(prompt: true)
+        NSWorkspace.shared.open(URL(string:
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+        startPermissionWatch()
     }
 
     // MARK: - Diktát
@@ -121,16 +181,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .thinking: symbol = "waveform"
         case .error: symbol = "exclamationmark.triangle"
         }
-        statusItem.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Dictate")
-        statusItem.button?.image?.isTemplate = true
+        guard let button = statusItem.button else { return }
+        if let img = NSImage(systemSymbolName: symbol, accessibilityDescription: "Dictate") {
+            img.isTemplate = true
+            button.image = img
+            button.title = ""
+        } else {
+            // Bez záložního textu by byla položka prázdná a nešla by najít.
+            button.image = nil
+            button.title = "◉"
+        }
+        button.toolTip = "Dictate — " + lastLine
     }
 
     private func buildMenu() {
         let menu = NSMenu()
         menu.addItem(disabled(lastLine))
+        if needsPermission {
+            let fix = NSMenuItem(title: "Udělit oprávnění Accessibility…",
+                                 action: #selector(requestPermission), keyEquivalent: "")
+            fix.target = self
+            menu.addItem(fix)
+            menu.addItem(disabled("Po udělení se appka rozjede sama"))
+        }
         menu.addItem(.separator())
         menu.addItem(disabled("Mikrofon: \(micName)"))
-        menu.addItem(disabled("Zkratka: podrž \(config.key == .leftOption ? "levý" : "pravý") ⌥"))
+        menu.addItem(disabled("Zkratka: podrž \(hotkeyLabel)"))
         menu.addItem(.separator())
 
         let entries = History.recent()
@@ -153,6 +229,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "Stav a nápověda…",
+                                action: #selector(showSetup), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Nastavení…",
                                 action: #selector(openConfig), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "Otevřít složku s nahrávkami",
@@ -180,6 +258,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSPasteboard.general.setString(entries[sender.tag].text, forType: .string)
         lastLine = "Zkopírováno do schránky"
         buildMenu()
+    }
+
+    @objc private func showSetup() {
+        setup.show(needsPermission: needsPermission, hotkeyLabel: hotkeyLabel, mic: micName)
     }
 
     @objc private func openConfig() {
