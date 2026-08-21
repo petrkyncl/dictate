@@ -20,8 +20,8 @@ když spadne síť nebo API, nahrávka je pořád tam a jde přepsat znovu.
 ## Fáze
 
 - [x] **1. Benchmark ASR** — hotovo, výsledky níž
-- [ ] **2. MVP menubar app** (Swift, push-to-talk, vložení textu)
-- [ ] 3. Cleanup vrstva (Haiku 4.5 + glosář + kontext podle aktivní appky)
+- [ ] **2. MVP menubar app** (Swift, push-to-talk, vložení textu) ← další
+- [x] **3. Cleanup vrstva** — hotovo, Haiku 4.5
 - [ ] 4. Odolnost (VAD segmentace, historie, offline fallback)
 
 ## Fáze 1 — benchmark
@@ -96,3 +96,45 @@ Regex by tady napáchal víc škody než užitku, takže se to nechává na mode
 - **skloňované tvary SaaS** („sasy", „sasů") — proto je SaaS jen na 45 %
 - **`níž` → `niche`** — „níž" je běžné české slovo, plošně nahradit nejde
 - velká písmena uprostřed věty
+
+
+## Výsledky fáze 3 — LLM vrstva
+
+Testováno na stejném korpusu. Kvalita vyrovnaná, rozhoduje latence a cena.
+
+| model | medián | nejhorší | $ / diktát | $ / měsíc¹ | celková latence² |
+|---|---|---|---|---|---|
+| **Haiku 4.5** | **1,93 s** | 2,92 s | **$0,0022** | **$3,25** | **3,51 s** |
+| Sonnet 5 | 4,75 s | 5,71 s | $0,0055 | $8,30 | 6,33 s |
+| Opus 5 | 5,40 s | 6,26 s | $0,0142 | $21,26 | 6,98 s |
+
+¹ 50 diktátů denně × 30 dní · ² včetně 1,58 s na ASR
+
+**Vítěz: Haiku 4.5** — 2,5× rychlejší a 2,5× levnější než Sonnet, kvalita stejná
+nebo lepší. Opus u jednoho souboru spadl na poměr slov 0,81, tedy začal shrnovat.
+
+### Co LLM vrstva opravila nad rámec regexu
+
+| | před | po |
+|---|---|---|
+| nejdelší úsek bez tečky | 418 slov | **95 slov** |
+| vět na 100 slov | 4,7 | 7,9 |
+| SaaS (vč. skloňování) | 5 | **12** |
+| MationX | 14 | 15 |
+| poměr slov vstup/výstup | — | **0,99** (nic se neztrácí) |
+
+`niche` vs `níž` rozlišilo Haiku správně podle kontextu — „specifické **niche**
+B2B Lead Gen" opravilo, „ceník byl mnohem **níž**" nechalo. Sonnet to minul.
+
+## Celková bilance
+
+```
+mikrofon → Whisper large-v3 (lokálně, 1,58 s) → regex čistička (0 s)
+         → Haiku 4.5 (1,93 s) → vložený text
+```
+
+**3,5 s od puštění klávesy po text · ~$3,25 měsíčně** (Wispr Flow stojí $12–15).
+
+Zbývá k optimalizaci: 3,5 s je u krátkého diktátu („ano, díky") citelné.
+Kandidáti — kratší systémový prompt, prompt caching, nebo přeskočit LLM
+u velmi krátkých vstupů.
