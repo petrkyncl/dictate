@@ -5,3 +5,5 @@ bench/samples/*.wav
 bench/results/*.json
 .DS_Store
 .env
+bench/corpus/*.wav
+bench/results/transcripts/

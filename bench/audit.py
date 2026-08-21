@@ -94,9 +94,18 @@ def main() -> int:
         halluc = []
         for f in files:
             t = f.read_text(encoding="utf-8")
+            spans: list[tuple[int, int, str]] = []
             for pat in HALLUCINATION:
                 for m in re.finditer(pat, t):
-                    halluc.append((f.stem, m.group(0).strip()[:60]))
+                    spans.append((m.start(), m.end(), m.group(0).strip()[:60]))
+            # vzory se prekryvaji (napr. "Titulky vytvořil" a "JohnyX" na stejnem
+            # miste) — slouc prekryvy, ať se jeden nález nepočítá dvakrát
+            for a, b, txt in sorted(spans):
+                if halluc and halluc[-1][0] == f.stem and a <= halluc[-1][2]:
+                    halluc[-1] = (f.stem, halluc[-1][1], max(b, halluc[-1][2]))
+                else:
+                    halluc.append((f.stem, txt, b))
+        halluc = [(s_, t_) for s_, t_, _ in halluc]
 
         worst_unp = max((longest_unpunctuated(f.read_text(encoding="utf-8")) + (f.stem,)
                          for f in files), key=lambda x: x[0])

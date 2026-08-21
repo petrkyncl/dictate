@@ -19,8 +19,8 @@ když spadne síť nebo API, nahrávka je pořád tam a jde přepsat znovu.
 
 ## Fáze
 
-- [x] **1. Benchmark ASR** — který model umí nejlíp česky *na tvém hlase*
-- [ ] 2. MVP menubar app (Swift, push-to-talk, vložení textu)
+- [x] **1. Benchmark ASR** — hotovo, výsledky níž
+- [ ] **2. MVP menubar app** (Swift, push-to-talk, vložení textu)
 - [ ] 3. Cleanup vrstva (Haiku 4.5 + glosář + kontext podle aktivní appky)
 - [ ] 4. Odolnost (VAD segmentace, historie, offline fallback)
 
@@ -56,3 +56,43 @@ tady se rozhoduje, jestli uslyší „MationX" nebo „mejšn iks").
 macOS 26.5, Apple M5 Pro. Python přes `uv`. Nativní app ve Swiftu
 (Xcode, free Personal Team certifikát — žádný Developer Program,
 žádná notarizace; lokálně buildnutá app nemá quarantine atribut).
+
+
+## Výsledky fáze 1
+
+Testováno na 75 minutách vlastního českého diktátu (15 nahrávek z Wispr Flow),
+2 modely × glosář × normalizace hlasitosti = 8 kondic.
+
+**Vítěz: `large-v3` + glosář v `initial_prompt` + normalizace na −20 LUFS.**
+
+| Termín | large-v3 samotný | vítězná kombinace |
+|---|---|---|
+| MationX | 4/14 (29 %) | **14/14 (100 %)** |
+| Attio | 0/3 (0 %) | **3/3 (100 %)** |
+| trychtýř | 0/1 | **1/1** |
+| SaaS | 1/11 (9 %) | 5/11 (45 %) |
+| halucinace | 3 | **0** |
+
+Latence 1,58 s na 20s diktát (Whisper počítá ve 30s oknech, takže
+kratší diktát stojí totéž). `large-v3-turbo` je 2× rychlejší, ale
+zacykluje se (×9 na r05) a MationX trefí hůř — nestojí to za to.
+
+### Co která páka dělá
+
+- **Glosář** (`initial_prompt`) — MationX 29 % → 60 %. Zároveň mírně
+  zvyšuje halucinace, protože model víc táhne k „pokračování textu".
+- **Normalizace** na −20 LUFS — nahrávky jsou o 10–20 dB pod řečovým
+  standardem. Sama o sobě smaže **všechny** halucinace a zkrotí
+  zacyklení turba (×9 → ×1).
+- **Deterministická čistička** ([dictate/postprocess.py](dictate/postprocess.py)) —
+  halucinace na nulu, MationX/Attio/trychtýř na 100 %.
+
+### Co zbývá na LLM vrstvu
+
+Regex by tady napáchal víc škody než užitku, takže se to nechává na model:
+
+- **interpunkce** — nejdelší úsek bez tečky je pořád 294–419 slov;
+  žádné nastavení ASR to neřeší, dlouhá forma se prostě rozpadne
+- **skloňované tvary SaaS** („sasy", „sasů") — proto je SaaS jen na 45 %
+- **`níž` → `niche`** — „níž" je běžné české slovo, plošně nahradit nejde
+- velká písmena uprostřed věty
