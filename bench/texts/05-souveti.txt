@@ -1,0 +1,1 @@
+Kdybych to měl shrnout, tak hlavní důvod, proč to zatím nefunguje, je ten, že jsme se rozhodli řešit dvě věci najednou, což se ukázalo jako chyba. Až to rozdělíme na dvě samostatné části, každá z nich bude jednodušší, a hlavně se to bude dát otestovat zvlášť.

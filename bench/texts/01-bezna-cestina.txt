@@ -1,0 +1,1 @@
+Dneska ráno jsem si uvědomil, že celý ten problém byl někde úplně jinde, než jsem si původně myslel. Zkoušel jsem to opravovat tři hodiny a nakonec se ukázalo, že stačilo změnit jednu jedinou hodnotu v konfiguraci. Příště začnu tím, že si to pořádně přečtu.

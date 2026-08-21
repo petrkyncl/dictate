@@ -1,0 +1,1 @@
+Server běží na portu 4010 a nginx to proxuje na doménu swiss.demo.mationx.com. Node máme ve verzi 22, ale měli bychom jít na 24. IP adresa je 31.97.140.40.

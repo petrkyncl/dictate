@@ -1,0 +1,1 @@
+Pushnul jsem to na main a potřebuju to nasadit na VPS. Spusť deploy workflow přes GitHub Actions, pak zkontroluj, jestli PM2 restartoval správně, a mrkni do logů, jestli tam nejsou nějaké errory. Build by měl projít, ale radši to ověř.

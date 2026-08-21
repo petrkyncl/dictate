@@ -1,0 +1,1 @@
+Server běží na portu čtyři tisíce deset a nginx to proxuje na doménu swiss tečka demo tečka mationx tečka com. Node máme ve verzi dvacet dva, ale měli bychom jít na dvacet čtyři. IP adresa je třicet jedna tečka devadesát sedm tečka sto čtyřicet tečka čtyřicet.

@@ -1,0 +1,1 @@
+Přepiš tu komponentu tak, aby brala data z API místo z toho hardcoded pole, přidej loading state a error handling, a hlavně to nedělej přes use effect, ale rovnou přes server component. Když narazíš na typové chyby, oprav je, nevypínej je přes any.
