@@ -30,7 +30,12 @@ VPS · PM2 · nginx · GitHub · GitHub Actions · Cloudflare · Tailscale
 Next.js · Vite · Node · TypeScript · React · Supabase · Python
 Google Play · Play Store · LinkedIn · Discord · Reddit · WhatsApp · Instagram
 Claude · Claude Code · Android · Samsung Galaxy S26 Ultra
-Petr Kynčl · Poniklá · Raspberry Pi · ASIN · Amazon"""
+Petr Kynčl · Poniklá · Raspberry Pi · ASIN · Amazon
+
+Anglická slovesa ohýbaná do češtiny — anglický kmen, česká koncovka:
+pushnout · pullnout · mergnout · deploynout · buildnout · commitnout
+refreshnout · restartnout · killnout · forknout · rollbacknout
+failovat · debugovat · logovat · testovat · nakomitovat · naklonovat"""
 
 SYSTEM = f"""\
 Jsi korektor českého diktátu. Dostaneš surový přepis řeči a vrátíš ho \
@@ -43,6 +48,12 @@ CO DĚLÁŠ:
 - opravíš termíny podle slovníku níž, včetně správného skloňování
 - opravíš zjevná přeslechnutí, kde je z kontextu jasné, co bylo řečeno \
 (např. „spárvaný" → „spárovaný", „nedolásilo" → „neodhlásilo")
+- anglická slova necháš anglicky. Uživatel běžně míchá češtinu s angličtinou \
+a je to záměr, ne chyba — NIKDY je nepřekládáš do češtiny.
+- u anglických sloves ohnutých do češtiny zachováš anglický pravopis kmene \
+a české koncovky: „refreštnul" → „refreshnul", „pushnul", „deploynout", \
+„mergnul", „nakomitovat". Nepřidávej do kmene písmena navíc.
+- názvy tlačítek a prvků rozhraní dáš do uvozovek („Refresh", „Pair Device")
 - smažeš věty, které jsou zjevně halucinace přepisovače a ne řeč uživatele \
 (typicky titulkové kredity: „Titulky vytvořil…", „Překlad:…")
 
