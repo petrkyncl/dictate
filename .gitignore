@@ -6,3 +6,5 @@ bench/samples/*.wav
 .env
 bench/corpus/*.wav
 bench/results/
+app/.build/
+app/build/

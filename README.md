@@ -20,9 +20,9 @@ když spadne síť nebo API, nahrávka je pořád tam a jde přepsat znovu.
 ## Fáze
 
 - [x] **1. Benchmark ASR** — hotovo, výsledky níž
-- [ ] **2. MVP menubar app** (Swift, push-to-talk, vložení textu) ← další
+- [x] **2. MVP menubar app** — hotovo, viz Spuštění
 - [x] **3. Cleanup vrstva** — hotovo, Haiku 4.5
-- [ ] 4. Odolnost (VAD segmentace, historie, offline fallback)
+- [ ] 4. Odolnost (VAD segmentace, historie v menu, offline fallback) ← další
 
 ## Fáze 1 — benchmark
 
@@ -152,3 +152,54 @@ odpovědi 1,67 s, takže cache ušetří 0,1 s. Nasazuje se kvůli ceně (−43 
 Zbývající latenci drží generování LLM. Dál by šlo: nechat model vracet jen
 seznam oprav místo celého textu, nebo vložit text z ASR okamžitě a tiše ho
 přepsat, až dorazí verze z LLM.
+
+
+## Spuštění
+
+```bash
+./install-daemon.sh          # démon jako LaunchAgent (drží Whisper v RAM)
+cd app && ./build.sh         # zkompiluje a podepíše Dictate.app
+open app/build/Dictate.app
+```
+
+Pak v **System Settings → Privacy & Security** povolit:
+**Accessibility** (odchyt klávesy + vkládání textu) a **Microphone**.
+
+**Podrž pravý ⌥ → mluv → pusť → text se vloží tam, kde je kurzor.**
+
+### Stabilní oprávnění
+
+Ad-hoc podpis mění otisk binárky při každém buildu, takže macOS appku
+považuje za novou a **smaže udělená oprávnění**. `make-cert.sh` vyrobí
+self-signed certifikát (zdarma, žádný Developer Program), ale macOS
+k němu nepustí `codesign`, dokud jednou nespustíš:
+
+```bash
+security set-key-partition-list -S apple-tool:,apple:,codesign: \
+  -s -l "Dictate Local Signing" ~/Library/Keychains/login.keychain-db
+```
+
+Chce to heslo ke klíčence. Bez toho kroku build spadne na ad-hoc podpis —
+appka funguje, jen budeš po každém rebuildu znovu povolovat oprávnění.
+
+## Architektura appky
+
+| Soubor | Co dělá |
+|---|---|
+| [HotkeyMonitor.swift](app/Sources/Dictate/HotkeyMonitor.swift) | `CGEventTap` na pravý ⌥, událost se nepohlcuje |
+| [Recorder.swift](app/Sources/Dictate/Recorder.swift) | ffmpeg se segmentací na 10s kousky |
+| [MicPicker.swift](app/Sources/Dictate/MicPicker.swift) | priorita Scarlett > vestavěný, kamery blokované |
+| [DaemonClient.swift](app/Sources/Dictate/DaemonClient.swift) | unix socket, JSON po řádcích |
+| [TextInserter.swift](app/Sources/Dictate/TextInserter.swift) | schránka + syntetické ⌘V, původní obsah se vrátí |
+
+**Proč pravý ⌥ a ne levý:** levý je pracovní klávesa (⌥+Delete maže slovo,
+⌥+šipky skáčou po slovech, na české klávesnici se přes něj píše @ a #).
+Pravý je na většině rozložení nepoužívaný.
+
+**Proč ne Fn:** systém na ni má vlastní akci (přepnutí jazyka nebo emoji
+paleta) a spolehlivě ji spolknout nejde — řeší ji WindowServer níž,
+než kam `CGEventTap` dosáhne.
+
+**Proč ffmpeg a ne AVAudioEngine:** segmentový muxer zapisuje kousky na
+disk průběžně sám, takže „audio je na disku dřív, než se přepisuje" platí
+z principu. A přepis se rozjede už během mluvení.
