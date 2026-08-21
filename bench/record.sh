@@ -1,24 +1,29 @@
 #!/usr/bin/env bash
 # Nahraje referencni vzorky pro ASR benchmark.
-# Pouziti:  ./record.sh [index_mikrofonu]   (default 2 = MacBook Pro Microphone)
+# Pouziti:  ./record.sh [index_mikrofonu]   (bez argumentu = autodetekce)
 set -uo pipefail
 cd "$(dirname "$0")"
 
-MIC="${1:-2}"
-mkdir -p samples
-
-case "$MIC" in
-  0) MIC_NAME="MX Brio" ;;
-  1) MIC_NAME="Scarlett Solo 4th Gen" ;;
-  2) MIC_NAME="MacBook Pro Microphone" ;;
-  *) MIC_NAME="zarizeni #$MIC" ;;
-esac
+# Mikrofon: 1) explicitni argument, 2) autodetekce (Scarlett > vestaveny, nikdy kamera)
+if [[ -n "${1:-}" ]]; then
+  MIC="$1"
+  MIC_NAME=$(ffmpeg -f avfoundation -list_devices true -i "" 2>&1 \
+    | sed -n '/AVFoundation audio devices/,$p' \
+    | sed -n "s/.*\\[${MIC}\\] \\(.*\\)$/\\1/p" | head -1)
+  MIC_NAME="${MIC_NAME:-zařízení #$MIC}"
+  MIC_SRC="ručně"
+else
+  picked=$("$(dirname "$0")/pick_mic.sh" --name) || exit 1
+  MIC=$(cut -f1 <<<"$picked")
+  MIC_NAME=$(cut -f2 <<<"$picked")
+  MIC_SRC="auto"
+fi
 
 bold=$'\033[1m'; dim=$'\033[2m'; grn=$'\033[32m'; ylw=$'\033[33m'; rst=$'\033[0m'
 
 echo
 echo "${bold}ASR benchmark — nahrávání vzorků${rst}"
-echo "${dim}Mikrofon: ${MIC_NAME}  (jiný: ./record.sh 0|1|2)${rst}"
+echo "${dim}Mikrofon: ${bold}${MIC_NAME}${rst}${dim} (${MIC_SRC})  ·  jiný: ./record.sh <index>${rst}"
 echo
 echo "Postup u každého vzorku:"
 echo "  1. přečti si text"
