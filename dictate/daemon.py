@@ -36,6 +36,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dictate.cleanup import GLOSSARY, clean_with_llm  # noqa: E402
 from dictate.postprocess import clean as regex_clean  # noqa: E402
 
+def _find_ffmpeg() -> str:
+    """launchd spousti sluzby s minimalnim PATH, kde Homebrew neni —
+    volat 'ffmpeg' holym jmenem tam skonci na FileNotFoundError."""
+    from shutil import which
+    for c in ("/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"):
+        if os.access(c, os.X_OK):
+            return c
+    return which("ffmpeg") or ""
+
+
+FFMPEG = _find_ffmpeg()
+
+# mlx_whisper si vola ffmpeg holym jmenem sam uvnitr knihovny (audio.load_audio),
+# takze absolutni cesta v nasem kodu nestaci — pod launchd (minimalni PATH)
+# by to spadlo az v okamziku prepisu. PATH se proto opravuje pro cely proces.
+if FFMPEG:
+    _bin = os.path.dirname(FFMPEG)
+    if _bin not in os.environ.get("PATH", "").split(":"):
+        os.environ["PATH"] = _bin + ":" + os.environ.get("PATH", "")
+
 APP_DIR = Path.home() / "Library" / "Application Support" / "Dictate"
 SOCKET = APP_DIR / "daemon.sock"
 HISTORY = APP_DIR / "history"
@@ -63,7 +83,7 @@ def normalize(src: str) -> str:
     halucinuje titulkove kredity (namereno: 3 halucinace -> 0)."""
     dst = tempfile.mktemp(suffix=".wav")
     try:
-        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", src,
+        subprocess.run([FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-i", src,
                         "-af", "loudnorm=I=-20:TP=-2:LRA=11", "-ar", "16000", "-ac", "1", dst],
                        check=True, timeout=30)
         return dst
@@ -181,10 +201,16 @@ class Daemon:
 
 def main() -> int:
     load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+    if not FFMPEG:
+        print("CHYBA: ffmpeg nenalezen. Nainstaluj: brew install ffmpeg", flush=True)
+        return 1
+    print(f"ffmpeg: {FFMPEG}", flush=True)
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        print("VAROVÁNÍ: ANTHROPIC_API_KEY chybí — poběží jen ASR bez úpravy textu", flush=True)
     print("načítám Whisper…", flush=True)
     t0 = time.perf_counter()
     with tempfile.NamedTemporaryFile(suffix=".wav") as tmp:
-        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+        subprocess.run([FFMPEG, "-hide_banner", "-loglevel", "error", "-y",
                         "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono", "-t", "0.4",
                         tmp.name], check=True)
         transcribe(tmp.name)          # zahreje model i Metal kernely

@@ -19,6 +19,11 @@ cat > "$PLIST" <<EOF
         <string>$ROOT/dictate/daemon.py</string>
     </array>
     <key>WorkingDirectory</key><string>$ROOT</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- launchd startuje s minimalnim PATH; mlx_whisper vola ffmpeg jmenem -->
+        <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
     <key>RunAtLoad</key><true/>
     <key>KeepAlive</key><true/>
     <key>StandardOutPath</key><string>$HOME/Library/Logs/dictate-daemon.log</string>
