@@ -4,13 +4,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private let hotkey = HotkeyMonitor()
     private let recorder = Recorder()
+    private let hud = RecordingHUD()
     private var daemon = DaemonClient()
     private var sessionID: String?
     private var micName = "—"
     private var lastLine = "Připraveno"
     private var busy = false
+    private var config = Config()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Config.writeDefault()
+        config = Config.load()
         statusItem = NSStatusItem.buildStatusItem()
         render(.idle)
         buildMenu()
@@ -22,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                   + "pak appku spusť znovu.")
             return
         }
+        hotkey.key = config.key
         guard hotkey.start() else {
             lastLine = "Nepodařilo se zachytit klávesu"
             return
@@ -45,12 +50,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             daemon = DaemonClient()
             try daemon.connect()
             sessionID = try daemon.start()
+            recorder.onLevel = { [weak self] level in self?.hud.update(level: level) }
             recorder.onChunk = { [weak self] url in
                 guard let self, let sid = self.sessionID else { return }
                 // Přepis běží už během mluvení — po puštění klávesy zbyde jen ocas.
                 try? self.daemon.chunk(session: sid, path: url.path)
             }
+            recorder.chunkSeconds = config.chunkSeconds
             _ = try recorder.start(micIndex: mic.index)
+            hud.show(.listening)
             render(.recording)
             lastLine = "Nahrávám…"
         } catch {
@@ -65,6 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let sid = sessionID else { return }
         sessionID = nil
         busy = true
+        hud.show(.thinking)
         render(.thinking)
         lastLine = "Přepisuji…"
         buildMenu()
@@ -75,6 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let result = Result { try self.daemon.finish(session: sid, tail: tail?.path) }
             DispatchQueue.main.async {
                 self.busy = false
+                self.hud.hide()
                 switch result {
                 case .success(let reply):
                     let text = reply.text ?? ""
@@ -120,8 +130,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(disabled(lastLine))
         menu.addItem(.separator())
         menu.addItem(disabled("Mikrofon: \(micName)"))
-        menu.addItem(disabled("Zkratka: podrž pravý ⌥"))
+        menu.addItem(disabled("Zkratka: podrž \(config.key == .leftOption ? "levý" : "pravý") ⌥"))
         menu.addItem(.separator())
+
+        let entries = History.recent()
+        if entries.isEmpty {
+            menu.addItem(disabled("Zatím žádné diktáty"))
+        } else {
+            let sub = NSMenu()
+            let fmt = DateFormatter()
+            fmt.dateFormat = "d. M. HH:mm"
+            for (i, e) in entries.enumerated() {
+                let item = NSMenuItem(title: "\(fmt.string(from: e.date))  \(e.preview)",
+                                      action: #selector(copyHistory(_:)), keyEquivalent: "")
+                item.tag = i
+                item.target = self
+                sub.addItem(item)
+            }
+            let root = NSMenuItem(title: "Historie (\(entries.count))", action: nil, keyEquivalent: "")
+            root.submenu = sub
+            menu.addItem(root)
+        }
+
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "Nastavení…",
+                                action: #selector(openConfig), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "Otevřít složku s nahrávkami",
                                 action: #selector(openRecordings), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Ukončit Dictate",
@@ -136,6 +169,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let i = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         i.isEnabled = false
         return i
+    }
+
+    /// Klik na položku historie zkopíruje text do schránky.
+    /// Záměrně nevkládá — v době kliknutí je aktivní menu, ne cílová appka.
+    @objc private func copyHistory(_ sender: NSMenuItem) {
+        let entries = History.recent()
+        guard sender.tag < entries.count else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(entries[sender.tag].text, forType: .string)
+        lastLine = "Zkopírováno do schránky"
+        buildMenu()
+    }
+
+    @objc private func openConfig() {
+        Config.writeDefault()
+        NSWorkspace.shared.open(Config.url)
     }
 
     @objc private func openRecordings() {

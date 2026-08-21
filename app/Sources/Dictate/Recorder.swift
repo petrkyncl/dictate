@@ -11,7 +11,8 @@ final class Recorder {
         let dir: URL
     }
 
-    private static let chunkSeconds = 10
+    /// Přepsatelné z config.json — kratší kousek = menší zbytek po puštění klávesy.
+    var chunkSeconds = 10
     private var process: Process?
     private var session: Session?
     private var sent = Set<String>()
@@ -19,6 +20,10 @@ final class Recorder {
 
     /// Volá se pro každý dokončený kousek, ještě během mluvení.
     var onChunk: ((URL) -> Void)?
+
+    /// Hlasitost 0…1 pro indikátor. Skutečné RMS z ffmpegu, ne animace naoko —
+    /// jinak by ukazatel vesele skákal i s odpojeným mikrofonem.
+    var onLevel: ((Double) -> Void)?
 
     private static var recordingsDir: URL {
         URL(fileURLWithPath: NSHomeDirectory())
@@ -37,13 +42,20 @@ final class Recorder {
             "-hide_banner", "-loglevel", "error",
             "-f", "avfoundation", "-i", ":\(micIndex)",
             "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
-            "-f", "segment", "-segment_time", "\(Self.chunkSeconds)",
+            // astats zvuk nemění, jen měří; ametadata to tiskne na stdout.
+            // Levá ruka tak dává hlasitost pro indikátor, pravá píše kousky.
+            "-af", "astats=metadata=1:reset=1,"
+                 + "ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-",
+            "-f", "segment", "-segment_time", "\(chunkSeconds)",
             "-reset_timestamps", "1",
             dir.appendingPathComponent("chunk_%03d.wav").path,
         ]
         p.standardInput = Pipe()
         p.standardError = Pipe()
+        let levels = Pipe()
+        p.standardOutput = levels
         try p.run()
+        readLevels(from: levels)
 
         process = p
         session = Session(id: id, dir: dir)
@@ -64,6 +76,7 @@ final class Recorder {
             p.waitUntilExit()
         }
         process = nil
+        onLevel = nil
         defer { session = nil }
 
         let remaining = chunks().filter { !sent.contains($0.lastPathComponent) }
@@ -73,6 +86,28 @@ final class Recorder {
             onChunk?(url)
         }
         return remaining.last
+    }
+
+    /// Čte RMS v dBFS z ffmpegu a převádí na 0…1 pro ukazatel.
+    private func readLevels(from pipe: Pipe) {
+        let handle = pipe.fileHandleForReading
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            var buffer = ""
+            while true {
+                let data = handle.availableData
+                if data.isEmpty { break }
+                buffer += String(data: data, encoding: .utf8) ?? ""
+                while let nl = buffer.firstIndex(of: "\n") {
+                    let line = String(buffer[..<nl])
+                    buffer = String(buffer[buffer.index(after: nl)...])
+                    guard let r = line.range(of: "RMS_level="),
+                          let db = Double(line[r.upperBound...]) else { continue }
+                    // -50 dBFS = ticho, -10 = hlasitá řeč
+                    let norm = min(max((db + 50) / 40, 0), 1)
+                    DispatchQueue.main.async { self?.onLevel?(norm) }
+                }
+            }
+        }
     }
 
     private func chunks() -> [URL] {
