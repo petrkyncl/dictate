@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkeyArmed = false
     private var needsPermission = false
     private var permissionWatch: Timer?
+    private var setupRefresh: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Config.writeDefault()
@@ -31,6 +32,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         hotkey.key = config.key
+        hotkey.onKeyDetected = { [weak self] in
+            guard let self else { return }
+            setup.keyPressCount += 1
+            setup.refreshLive(hotkeyLabel: hotkeyLabel)
+        }
         hotkey.onPress = { [weak self] in self?.beginDictation() }
         hotkey.onRelease = { [weak self] in self?.endDictation() }
 
@@ -41,6 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Okno se ukáže, jen když něco chybí. Když je vše v pořádku, appka
         // tiše sedí v liště a neotravuje.
+        startSetupRefresh()
         if needsPermission {
             setup.show(needsPermission: true, hotkeyLabel: hotkeyLabel, mic: micName)
         }
@@ -67,12 +74,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         guard hotkey.start() else {
-            lastLine = "Odchyt klávesy se nezdařil"
+            // Oprávnění je, ale tap se nevytvořil — jiná příčina než práva.
+            lastLine = "Odchyt klávesy se nezdařil (tap)"
             render(.error)
             buildMenu()
+            setup.isArmed = false
+            setup.refreshLive(hotkeyLabel: hotkeyLabel)
             return
         }
         hotkeyArmed = true
+        setup.isArmed = true
         needsPermission = false
         permissionWatch?.invalidate()
         permissionWatch = nil
@@ -80,6 +91,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         render(.idle)
         buildMenu()
         setup.refresh(needsPermission: false, hotkeyLabel: hotkeyLabel, mic: micName)
+        startSetupRefresh()
     }
 
     /// Po udělení oprávnění se appka rozjede sama, bez restartu.
@@ -88,6 +100,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         permissionWatch = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             guard let self else { return }
             if HotkeyMonitor.hasAccessibilityPermission(prompt: false) { armHotkey() }
+        }
+    }
+
+    /// Okno se drží aktuální samo — jinak zůstane viset na textu, který
+    /// platil ve chvíli otevření, a uživatel podle něj hledá neexistující problém.
+    private func startSetupRefresh() {
+        guard setupRefresh == nil else { return }
+        setupRefresh = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let missing = !HotkeyMonitor.hasAccessibilityPermission(prompt: false)
+            if missing != needsPermission {
+                needsPermission = missing
+                if missing { hotkeyArmed = false; setup.isArmed = false; armHotkey() }
+            }
+            setup.refresh(needsPermission: needsPermission,
+                          hotkeyLabel: hotkeyLabel, mic: micName)
         }
     }
 

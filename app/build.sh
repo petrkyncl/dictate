@@ -39,8 +39,16 @@ fi
 
 echo
 codesign -d -r- "$APP" 2>&1 | grep '^designated' | sed 's/^/   /'
+# Instalace na stabilni misto: ze slozky build/ se app spousti spatne
+# (Spotlight ji nenajde) a hlavne se tim mensi riziko, ze TCC bude resit
+# jinou cestu nez tu, ktere uzivatel udelil opravneni.
+DEST="$HOME/Applications/Dictate.app"
+mkdir -p "$HOME/Applications"
+rm -rf "$DEST"
+cp -R "$APP" "$DEST"
+
 echo
-echo "✓ hotovo: $(pwd)/$APP"
+echo "✓ hotovo: $DEST"
 if [ "$SIGNED_STABLE" = "0" ]; then
     echo
     echo "Pro stabilní oprávnění spusť jednou (chce heslo ke klíčence):"
@@ -49,5 +57,5 @@ if [ "$SIGNED_STABLE" = "0" ]; then
     echo "  a pak znovu ./build.sh"
 fi
 echo
-echo "Spuštění:   open $APP"
+echo "Spuštění:   open \"$DEST\""
 echo "Oprávnění:  System Settings → Privacy & Security → Accessibility (+ Microphone)"

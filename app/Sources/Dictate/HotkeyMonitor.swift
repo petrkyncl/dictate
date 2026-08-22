@@ -19,6 +19,10 @@ final class HotkeyMonitor {
     var onPress: (() -> Void)?
     var onRelease: (() -> Void)?
 
+    /// Fire hned při každém stisku sledované klávesy, nezávisle na prodlevě.
+    /// Slouží k tomu, aby uživatel v okně viděl, že ho appka slyší.
+    var onKeyDetected: (() -> Void)?
+
     /// Jak dlouho se musí klávesa držet, než se začne nahrávat.
     /// Bez téhle prodlevy by u levého ⌥ spustilo nahrávání každé
     /// ⌥+Delete nebo ⌥+šipka.
@@ -77,6 +81,7 @@ final class HotkeyMonitor {
 
         DispatchQueue.main.async {
             if down {
+                self.onKeyDetected?()
                 self.didFire = false
                 self.armTimer = Timer.scheduledTimer(withTimeInterval: self.holdThreshold,
                                                      repeats: false) { [weak self] _ in
