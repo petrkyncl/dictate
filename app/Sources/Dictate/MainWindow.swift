@@ -4,8 +4,10 @@ import AppKit
 ///
 /// Ikonka v liště je nespolehlivá — na Macu s výřezem a plnou lištou ji
 /// macOS tiše skryje. Okno je proto hlavní rozhraní, lišta jen zkratka.
-final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate, HistoryCellDelegate {
     var onGrantClicked: (() -> Void)?
+    /// Akce, které musí vyřídit démon (běh na pozadí, hlášení výsledku).
+    var onRegenerate: ((History.Entry, Bool) -> Void)?
 
     /// Počet zachycených stisků klávesy. Rostoucí číslo je jediný spolehlivý
     /// důkaz, že odchyt funguje — přepínač v System Settings umí ukazovat
@@ -13,8 +15,10 @@ final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     var keyPressCount = 0
     var isArmed = false
     var needsPermission = false
-    var hotkeyLabel = "levý ⌥"
+    var hotkeyLabel = "pravý ⌥"
+    var hotkeyHelp = "podrž"
     var micName = "—"
+    var micAuthorized = true
 
     private var window: NSWindow?
     private var statusField: NSTextField?
@@ -32,15 +36,30 @@ final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     }
 
     func reload() {
-        entries = History.recent(100)
+        entries = History.recent(200)
         table?.reloadData()
+        recalcHeights()
         refresh()
+    }
+
+    /// Po změně šířky okna se musí přepočítat výšky řádků, jinak text
+    /// buď přetéká, nebo za sebou nechává prázdno.
+    func recalcHeights() {
+        guard let t = table, t.numberOfRows > 0 else { return }
+        t.noteHeightOfRows(withIndexesChanged: IndexSet(0..<t.numberOfRows))
     }
 
     func refresh() {
         grantButton?.isHidden = !needsPermission
 
-        if needsPermission {
+        if !micAuthorized {
+            statusField?.stringValue =
+                "⚠️  Chybí oprávnění k mikrofonu.\n\n"
+                + "System Settings → Privacy & Security → Microphone, zapni tam Dictate.\n"
+                + "Bez něj nahrávání tiše skončí prázdným textem."
+            statusField?.textColor = .labelColor
+            grantButton?.isHidden = false
+        } else if needsPermission {
             statusField?.stringValue =
                 "⚠️  Chybí oprávnění Accessibility — bez něj Dictate nevidí stisk "
                 + "klávesy a nemůže vkládat text.\n"
@@ -49,7 +68,8 @@ final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
             statusField?.textColor = .labelColor
         } else {
             statusField?.stringValue =
-                "Podrž \(hotkeyLabel), mluv, pusť — text se vloží tam, kde je kurzor.\n"
+                "\(hotkeyHelp.prefix(1).uppercased() + hotkeyHelp.dropFirst()) "
+                + "\(hotkeyLabel), mluv — text se vloží tam, kde je kurzor.\n"
                 + "Mikrofon: \(micName)"
             statusField?.textColor = .secondaryLabelColor
         }
@@ -58,16 +78,19 @@ final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
             liveField?.stringValue = "Odchyt klávesy: neaktivní"
             liveField?.textColor = .secondaryLabelColor
         } else if keyPressCount == 0 {
-            liveField?.stringValue = "Zkouška: podrž teď \(hotkeyLabel) — naskočí tu číslo"
+            liveField?.stringValue = "Zkouška: stiskni teď \(hotkeyLabel) — naskočí tu číslo"
             liveField?.textColor = .secondaryLabelColor
         } else {
             liveField?.stringValue = "✅  Stisk zachycen \(keyPressCount)× — odchyt funguje"
             liveField?.textColor = .systemGreen
         }
 
-        footer?.stringValue = entries.isEmpty
-            ? "Zatím žádné diktáty"
-            : "\(entries.count) diktátů · klikni na řádek a zkopíruje se do schránky"
+        if footer?.stringValue.isEmpty ?? true || footer?.stringValue.hasPrefix("Zatím") == true
+            || footer?.stringValue.contains("diktát") == true {
+            footer?.stringValue = entries.isEmpty
+                ? "Zatím žádné diktáty"
+                : "\(entries.count) diktátů · nabídka ⌄ vpravo u každého záznamu"
+        }
     }
 
     // MARK: - Sestavení
@@ -105,7 +128,7 @@ final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
         grant.frame = NSRect(x: 24, y: 392, width: 230, height: 30)
         grant.autoresizingMask = [.minYMargin]
 
-        let header = NSTextField(labelWithString: "Historie")
+        let header = NSTextField(labelWithString: "Historie diktátů")
         header.font = .systemFont(ofSize: 13, weight: .semibold)
         header.frame = NSRect(x: 24, y: 362, width: 200, height: 18)
         header.autoresizingMask = [.minYMargin]
@@ -118,18 +141,20 @@ final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
         let t = NSTableView(frame: scroll.bounds)
         t.dataSource = self
         t.delegate = self
-        t.rowHeight = 34
         t.usesAlternatingRowBackgroundColors = true
         t.headerView = nil
-        t.target = self
-        t.action = #selector(rowClicked)
+        t.style = .inset
+        t.gridStyleMask = []
+        t.allowsMultipleSelection = false
 
-        let timeCol = NSTableColumn(identifier: .init("time"))
-        timeCol.width = 108
-        let textCol = NSTableColumn(identifier: .init("text"))
-        textCol.width = 440
-        t.addTableColumn(timeCol)
-        t.addTableColumn(textCol)
+        let col = NSTableColumn(identifier: .init("entry"))
+        col.resizingMask = .autoresizingMask
+        // Bez explicitní šířky zůstane sloupec ~40 bodů široký a text
+        // se do buňky nevejde — vypadá to, že se historie nenačetla.
+        col.width = scroll.contentSize.width - 4
+        col.minWidth = 200
+        t.addTableColumn(col)
+        t.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         scroll.documentView = t
 
         let f = NSTextField(labelWithString: "")
@@ -143,6 +168,11 @@ final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
 
         window = w; statusField = status; liveField = live
         grantButton = grant; table = t; footer = f
+
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didResizeNotification, object: w, queue: .main) { [weak self] _ in
+            self?.recalcHeights()
+        }
     }
 
     // MARK: - Tabulka
@@ -152,29 +182,52 @@ final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?,
                    row: Int) -> NSView? {
         guard row < entries.count else { return nil }
-        let e = entries[row]
-        let label = NSTextField(labelWithString: "")
-        label.lineBreakMode = .byTruncatingTail
-
-        if tableColumn?.identifier.rawValue == "time" {
-            let fmt = DateFormatter()
-            fmt.dateFormat = "d. M. HH:mm"
-            label.stringValue = fmt.string(from: e.date)
-            label.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-            label.textColor = .secondaryLabelColor
-        } else {
-            label.stringValue = e.text.replacingOccurrences(of: "\n", with: " ")
-            label.font = .systemFont(ofSize: 12)
-            label.toolTip = e.text
-        }
-        return label
+        let cell = tableView.makeView(withIdentifier: HistoryCell.identifier, owner: self)
+            as? HistoryCell ?? {
+                let c = HistoryCell(frame: .zero)
+                c.identifier = HistoryCell.identifier
+                return c
+            }()
+        cell.configure(entries[row], row: row, delegate: self)
+        return cell
     }
 
-    @objc private func rowClicked() {
-        guard let t = table, t.clickedRow >= 0, t.clickedRow < entries.count else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(entries[t.clickedRow].text, forType: .string)
-        footer?.stringValue = "✅  Zkopírováno do schránky"
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        guard row < entries.count else { return 40 }
+        // Šířka tabulky je při prvním sestavení ještě nulová; brát ji odtud
+        // by dalo nesmyslně vysoké řádky a text by se nevešel.
+        let w = tableView.enclosingScrollView?.contentSize.width
+            ?? (tableView.bounds.width > 0 ? tableView.bounds.width : 560)
+        return HistoryCell.height(for: entries[row].text, width: w)
+    }
+
+    // MARK: - Akce u záznamu
+
+    func historyCell(_ cell: HistoryCell, didChoose action: HistoryCell.Action, row: Int) {
+        guard row < entries.count else { return }
+        let e = entries[row]
+        switch action {
+        case .copy:
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(e.text, forType: .string)
+            note("✅  Zkopírováno do schránky")
+        case .regenerate:
+            note("Přegeneruji úpravu…")
+            onRegenerate?(e, false)
+        case .retranscribe:
+            note("Přepisuji znovu z audia…")
+            onRegenerate?(e, true)
+        case .revealAudio:
+            if let a = e.audio { NSWorkspace.shared.activateFileViewerSelecting([a]) }
+        case .delete:
+            History.delete(e)
+            reload()
+            note("Záznam smazán")
+        }
+    }
+
+    func note(_ text: String) {
+        footer?.stringValue = text
     }
 
     @objc private func grant() { onGrantClicked?() }

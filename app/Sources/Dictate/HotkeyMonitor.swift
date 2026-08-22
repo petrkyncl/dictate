@@ -1,37 +1,72 @@
 import AppKit
 
-/// Push-to-talk na pravém ⌥.
+/// Odchyt spouštěcí klávesy. Umí dva režimy a tři klávesy.
 ///
-/// Proč pravý a ne levý: levý ⌥ je pracovní klávesa (⌥+Delete maže slovo,
-/// ⌥+šipky skáčou po slovech, na české klávesnici se přes něj píše @ a #).
-/// Pravý je na většině rozložení prakticky nepoužívaný.
+/// PROČ NE Fn: systém na ni má vlastní akci (přepnutí jazyka, emoji paleta)
+/// a spolehlivě ji spolknout nejde — řeší ji WindowServer pod úrovní,
+/// kam CGEventTap dosáhne.
 ///
-/// Proč ne Fn: systém na ni má vlastní akci (přepnutí jazyka nebo emoji
-/// paleta) a spolknout ji spolehlivě nejde — řeší ji WindowServer níž,
-/// než kam CGEventTap dosáhne.
+/// PROČ F5 FUNGUJE JEN PODMÍNĚNĚ: má na sobě mikrofon, protože spouští
+/// systémový Dictate od Applu. Dokud ho uživatel nevypne v System Settings
+/// → Keyboard → Dictation, sebere si událost systém dřív než my.
 final class HotkeyMonitor {
-    enum Key: CGKeyCode {
-        case rightOption = 61
-        case leftOption = 58
+    enum Trigger: String {
+        case leftOption, rightOption, f5
+
+        var keyCode: CGKeyCode {
+            switch self {
+            case .leftOption: 58
+            case .rightOption: 61
+            case .f5: 96
+            }
+        }
+        /// Modifikátor chodí jako flagsChanged, běžná klávesa jako keyDown/keyUp.
+        var isModifier: Bool { self != .f5 }
+
+        var label: String {
+            switch self {
+            case .leftOption: "levý ⌥"
+            case .rightOption: "pravý ⌥"
+            case .f5: "F5"
+            }
+        }
     }
 
-    var key: Key = .rightOption
+    enum Mode: String {
+        /// Držíš = nahrává, pustíš = přepíše.
+        case hold
+        /// Dvojité ťuknutí zapne, další ťuknutí vypne. Na dlouhý diktát,
+        /// kde je držení klávesy nepohodlné.
+        case toggle
+
+        var help: String {
+            switch self {
+            case .hold: "podrž"
+            case .toggle: "ťukni dvakrát pro start, jednou pro konec —"
+            }
+        }
+    }
+
+    var trigger: Trigger = .rightOption
+    var mode: Mode = .hold
+
+    /// V režimu hold: jak dlouho držet, než se začne nahrávat. Bez prodlevy
+    /// by u levého ⌥ spustilo nahrávání každé ⌥+Delete nebo ⌥+šipka.
+    var holdThreshold: TimeInterval = 0.25
+    /// V režimu toggle: maximální rozestup dvou ťuknutí.
+    var doubleTapWindow: TimeInterval = 0.45
+
     var onPress: (() -> Void)?
     var onRelease: (() -> Void)?
-
-    /// Fire hned při každém stisku sledované klávesy, nezávisle na prodlevě.
-    /// Slouží k tomu, aby uživatel v okně viděl, že ho appka slyší.
+    /// Fire při každém stisku sledované klávesy — aby šlo v okně ukázat,
+    /// že appka uživatele slyší, i když se zrovna nezačalo nahrávat.
     var onKeyDetected: (() -> Void)?
-
-    /// Jak dlouho se musí klávesa držet, než se začne nahrávat.
-    /// Bez téhle prodlevy by u levého ⌥ spustilo nahrávání každé
-    /// ⌥+Delete nebo ⌥+šipka.
-    var holdThreshold: TimeInterval = 0.25
 
     private var tap: CFMachPort?
     private var isDown = false
     private var armTimer: Timer?
-    private var didFire = false
+    private var recording = false
+    private var lastTapAt: Date?
 
     static func hasAccessibilityPermission(prompt: Bool) -> Bool {
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: prompt]
@@ -40,73 +75,108 @@ final class HotkeyMonitor {
 
     @discardableResult
     func start() -> Bool {
-        // keyDown je potřeba, aby šlo poznat ⌥+jiná klávesa (zkratka)
-        // od samotného držení ⌥ (diktát).
-        let flagsBit: UInt64 = 1 << UInt64(CGEventType.flagsChanged.rawValue)
-        let keyBit: UInt64 = 1 << UInt64(CGEventType.keyDown.rawValue)
-        let mask = CGEventMask(flagsBit | keyBit)
-        guard let tap = CGEvent.tapCreate(
+        stop()
+        let bits: UInt64 = (1 << UInt64(CGEventType.flagsChanged.rawValue))
+                         | (1 << UInt64(CGEventType.keyDown.rawValue))
+                         | (1 << UInt64(CGEventType.keyUp.rawValue))
+        guard let t = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
-            options: .listenOnly,            // událost nepohlcujeme — ⌥ musí dál fungovat
-            eventsOfInterest: mask,
+            options: .listenOnly,          // událost nepohlcujeme, klávesa musí dál fungovat
+            eventsOfInterest: CGEventMask(bits),
             callback: { _, type, event, refcon in
                 guard let refcon else { return Unmanaged.passUnretained(event) }
-                let me = Unmanaged<HotkeyMonitor>.fromOpaque(refcon).takeUnretainedValue()
-                me.handle(event, type: type)
+                Unmanaged<HotkeyMonitor>.fromOpaque(refcon)
+                    .takeUnretainedValue().handle(event, type: type)
                 return Unmanaged.passUnretained(event)
             },
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else { return false }
 
-        self.tap = tap
-        let src = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        tap = t
+        let src = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, t, 0)
         CFRunLoopAddSource(CFRunLoopGetCurrent(), src, .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
+        CGEvent.tapEnable(tap: t, enable: true)
         return true
     }
 
+    func stop() {
+        if let t = tap { CGEvent.tapEnable(tap: t, enable: false) }
+        tap = nil
+        armTimer?.invalidate(); armTimer = nil
+        isDown = false; recording = false; lastTapAt = nil
+    }
+
+    /// Vnější zastavení (např. z menu), ať stav nezůstane rozjetý.
+    func forceStop() {
+        guard recording else { return }
+        recording = false
+        onRelease?()
+    }
+
     private func handle(_ event: CGEvent, type: CGEventType) {
-        // Jiná klávesa během držení ⌥ => je to zkratka, ne diktát.
-        if type == .keyDown {
-            if isDown { DispatchQueue.main.async { self.cancelArm() } }
+        let code = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+
+        // Jiná klávesa během držení modifikátoru => je to zkratka, ne diktát.
+        if type == .keyDown, code != trigger.keyCode, isDown, mode == .hold {
+            DispatchQueue.main.async { self.cancelArm() }
             return
         }
+        guard code == trigger.keyCode else { return }
 
-        let code = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
-        guard code == key.rawValue else { return }
-        let down = event.flags.contains(.maskAlternate)
+        let down: Bool
+        if trigger.isModifier {
+            guard type == .flagsChanged else { return }
+            down = event.flags.contains(.maskAlternate)
+        } else {
+            guard type == .keyDown || type == .keyUp else { return }
+            down = (type == .keyDown)
+            if down && event.getIntegerValueField(.keyboardEventAutorepeat) != 0 { return }
+        }
         guard down != isDown else { return }
         isDown = down
 
         DispatchQueue.main.async {
-            if down {
-                self.onKeyDetected?()
-                self.didFire = false
-                self.armTimer = Timer.scheduledTimer(withTimeInterval: self.holdThreshold,
-                                                     repeats: false) { [weak self] _ in
-                    guard let self, self.isDown else { return }
-                    self.didFire = true
-                    self.onPress?()
-                }
-            } else {
-                self.armTimer?.invalidate()
-                self.armTimer = nil
-                if self.didFire {
-                    self.didFire = false
-                    self.onRelease?()
-                }
-            }
+            if down { self.onKeyDetected?() }
+            self.mode == .hold ? self.handleHold(down: down) : self.handleToggle(down: down)
         }
     }
 
-    /// Zruší čekání na spuštění — zmáčkla se jiná klávesa, jde o zkratku.
-    private func cancelArm() {
-        armTimer?.invalidate()
-        armTimer = nil
-        if didFire {                 // stihlo se to rozjet, uklidit
-            didFire = false
-            onRelease?()
+    private func handleHold(down: Bool) {
+        if down {
+            recording = false
+            armTimer = Timer.scheduledTimer(withTimeInterval: holdThreshold,
+                                            repeats: false) { [weak self] _ in
+                guard let self, isDown else { return }
+                recording = true
+                onPress?()
+            }
+        } else {
+            armTimer?.invalidate(); armTimer = nil
+            if recording { recording = false; onRelease?() }
         }
+    }
+
+    private func handleToggle(down: Bool) {
+        guard down else { return }
+        if recording {                       // jedno ťuknutí = konec
+            recording = false
+            lastTapAt = nil
+            onRelease?()
+            return
+        }
+        let now = Date()
+        if let last = lastTapAt, now.timeIntervalSince(last) <= doubleTapWindow {
+            lastTapAt = nil
+            recording = true
+            onPress?()
+        } else {
+            lastTapAt = now
+        }
+    }
+
+    private func cancelArm() {
+        armTimer?.invalidate(); armTimer = nil
+        if recording { recording = false; onRelease?() }
     }
 }

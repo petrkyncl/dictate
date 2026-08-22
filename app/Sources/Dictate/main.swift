@@ -39,6 +39,38 @@ if CommandLine.arguments.contains("--test-hud") {
     app.run()
 }
 
+// Diagnostika: projde celý řetěz (mikrofon → ffmpeg → démon → text) bez
+// nutnosti mačkat klávesu. Ověřuje to, co jinak jde otestovat jen ručně.
+if CommandLine.arguments.contains("--selftest") {
+    let seconds = Double(CommandLine.arguments.last ?? "") ?? 6.0
+    guard let mic = MicPicker.pick() else {
+        print("✗ žádný mikrofon"); exit(1)
+    }
+    print("mikrofon: [\(mic.index)] \(mic.name)")
+    let rec = Recorder()
+    let client = DaemonClient()
+    do {
+        try client.connect()
+        let sid = try client.start()
+        let session = try rec.start(micIndex: mic.index)
+        print("nahrávám \(Int(seconds)) s do \(session.dir.path)…")
+        rec.onLevel = { _ in }
+        Thread.sleep(forTimeInterval: seconds)
+        let tail = rec.stop()
+        print("soubor: \(tail?.lastPathComponent ?? "ŽÁDNÝ ⚠")")
+        if let t = tail {
+            let size = (try? FileManager.default.attributesOfItem(atPath: t.path)[.size] as? Int) ?? 0
+            print("velikost: \(size ?? 0) B")
+        }
+        let reply = try client.finish(session: sid, tail: tail?.path)
+        print("text: \(reply.text ?? "")")
+        print("čas: ASR \(reply.timing?.asr_tail ?? 0)s + LLM \(reply.timing?.llm ?? 0)s")
+        exit(0)
+    } catch {
+        print("✗ \(error.localizedDescription)"); exit(1)
+    }
+}
+
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

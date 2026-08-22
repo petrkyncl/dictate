@@ -156,7 +156,7 @@ class Daemon:
             print(f"[llm selhalo, vracím text z ASR] {type(e).__name__}: {e}", flush=True)
         t_llm = time.perf_counter() - t0
 
-        self.archive(s.id, raw, final)
+        self.archive(s.id, raw, final, msg.get("path"))
         return {"text": final,
                 "timing": {"asr_tail": round(t_asr, 2),          # jen po pusteni klavesy
                            "asr_behem_mluveni": round(s.asr_seconds, 2),
@@ -169,11 +169,53 @@ class Daemon:
         return {"ready": True, "model": MODEL}
 
     # -- historie ---------------------------------------------------------
-    def archive(self, sid: str, raw: str, final: str) -> None:
+    def archive(self, sid: str, raw: str, final: str, audio: str | None) -> None:
         HISTORY.mkdir(parents=True, exist_ok=True)
         (HISTORY / f"{time.strftime('%Y%m%d-%H%M%S')}-{sid}.json").write_text(
-            json.dumps({"raw": raw, "text": final}, ensure_ascii=False, indent=2),
+            json.dumps({"raw": raw, "text": final, "audio": audio},
+                       ensure_ascii=False, indent=2),
             encoding="utf-8")
+
+    # -- prace s historii -------------------------------------------------
+    def cmd_regenerate(self, msg: dict) -> dict:
+        """Znovu pusti upravu textu nad ulozenym prepisem z ASR.
+
+        Levne a rychle — audio se neprepisuje znovu. Pouziti: kdyz se
+        upravi glosar a chce se videt, co to udela se starym diktatem."""
+        path = Path(msg["file"])
+        if not path.exists():
+            return {"error": "záznam neexistuje"}
+        rec = json.loads(path.read_text(encoding="utf-8"))
+        base, _ = regex_clean(rec.get("raw", ""))
+        if not base:
+            return {"error": "záznam nemá surový přepis"}
+        try:
+            res = clean_with_llm(base)
+        except Exception as e:
+            return {"error": f"{type(e).__name__}: {e}"}
+        rec["text"] = res.text
+        path.write_text(json.dumps(rec, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"text": res.text, "usd": round(res.usd, 5)}
+
+    def cmd_retranscribe(self, msg: dict) -> dict:
+        """Prepise znovu z audia. Draz nez regenerate, ale chytne i chyby ASR."""
+        path = Path(msg["file"])
+        if not path.exists():
+            return {"error": "záznam neexistuje"}
+        rec = json.loads(path.read_text(encoding="utf-8"))
+        audio = rec.get("audio")
+        if not audio or not Path(audio).exists():
+            return {"error": "audio už na disku není"}
+        raw = transcribe(audio)
+        base, _ = regex_clean(raw)
+        try:
+            res = clean_with_llm(base)
+            final = res.text
+        except Exception:
+            final = base
+        rec["raw"], rec["text"] = raw, final
+        path.write_text(json.dumps(rec, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"text": final}
 
     # -- server -----------------------------------------------------------
     def handle(self, conn: socket.socket) -> None:

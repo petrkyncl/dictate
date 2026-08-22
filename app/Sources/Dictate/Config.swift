@@ -6,7 +6,7 @@ import Foundation
 /// soubor lepší nástroj než formulář. Démon čte tentýž soubor.
 struct Config {
     var hotkey: String = "rightOption"
-    var chunkSeconds: Int = 10
+    var mode: String = "hold"
     var model: String = "claude-haiku-4-5"
 
     static var url: URL {
@@ -20,13 +20,17 @@ struct Config {
               let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { writeDefault(); return c }
         if let v = o["hotkey"] as? String { c.hotkey = v }
-        if let v = o["chunk_seconds"] as? Int, (3...30).contains(v) { c.chunkSeconds = v }
+        if let v = o["mode"] as? String { c.mode = v }
         if let v = o["model"] as? String { c.model = v }
         return c
     }
 
-    var key: HotkeyMonitor.Key {
-        hotkey == "leftOption" ? .leftOption : .rightOption
+    var trigger: HotkeyMonitor.Trigger {
+        HotkeyMonitor.Trigger(rawValue: hotkey) ?? .rightOption
+    }
+
+    var hotkeyMode: HotkeyMonitor.Mode {
+        HotkeyMonitor.Mode(rawValue: mode) ?? .hold
     }
 
     /// Vzor se vypíše i s komentářem, aby bylo jasné, co se smí měnit.
@@ -36,10 +40,10 @@ struct Config {
           "_": "Nastavení Dictate. Po změně restartuj appku (a démona, měníš-li glosář).",
 
           "hotkey": "rightOption",
-          "_hotkey": "rightOption nebo leftOption. Levý ⌥ je pracovní klávesa (⌥+Delete, ⌥+šipky, @ a # na české klávesnici) — na push-to-talk se hodí hůř.",
+          "_hotkey": "rightOption, leftOption nebo f5. Levý ⌥ je pracovní klávesa (⌥+Delete, ⌥+šipky, @ a # na české klávesnici). F5 funguje až po vypnutí systémového diktování v System Settings → Keyboard → Dictation.",
 
-          "chunk_seconds": 10,
-          "_chunk_seconds": "Po kolika sekundách poslat kousek k přepisu už během mluvení. Kratší = menší zbytek po puštění klávesy, ale víc volání.",
+          "mode": "hold",
+          "_mode": "hold = drž klávesu a mluv. toggle = ťukni dvakrát pro start, jednou pro konec; na dlouhý diktát pohodlnější.",
 
           "model": "claude-haiku-4-5",
           "_model": "Model pro úpravu textu. Haiku je nejrychlejší i nejlevnější a v testu na češtině nebyl horší než Sonnet ani Opus.",

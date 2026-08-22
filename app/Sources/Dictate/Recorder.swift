@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 
 /// Nahrává přes ffmpeg do jednoho souboru, průběžně na disk.
@@ -21,9 +22,25 @@ final class Recorder {
     private var session: Session?
     private var sent = Set<String>()
     private var poller: Timer?
+    private var errorText = ""
 
     /// Volá se pro každý dokončený kousek, ještě během mluvení.
     var onChunk: ((URL) -> Void)?
+
+    /// Poslední chyba nahrávání — aby se dala ukázat uživateli místo ticha.
+    private(set) var lastError: String?
+
+    /// Stav přístupu k mikrofonu. Bez něj ffmpeg jen visí a nevytvoří soubor,
+    /// takže by diktát tiše skončil prázdným textem.
+    static var micAuthorized: Bool {
+        AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+    }
+
+    static func requestMicAccess(_ done: @escaping (Bool) -> Void) {
+        AVCaptureDevice.requestAccess(for: .audio) { ok in
+            DispatchQueue.main.async { done(ok) }
+        }
+    }
 
     /// Hlasitost 0…1 pro indikátor. Skutečné RMS z ffmpegu, ne animace naoko —
     /// jinak by ukazatel vesele skákal i s odpojeným mikrofonem.
@@ -34,7 +51,21 @@ final class Recorder {
             .appendingPathComponent("Library/Application Support/Dictate/recordings")
     }
 
+    enum Failure: LocalizedError {
+        case noMicAccess
+        case noOutput(String)
+        var errorDescription: String? {
+            switch self {
+            case .noMicAccess:
+                "Chybí oprávnění k mikrofonu (System Settings → Privacy & Security → Microphone)"
+            case .noOutput(let detail):
+                "Nahrávka nevznikla. \(detail)"
+            }
+        }
+    }
+
     func start(micIndex: Int) throws -> Session {
+        guard Self.micAuthorized else { throw Failure.noMicAccess }
         let id = ISO8601DateFormatter().string(from: Date())
             .replacingOccurrences(of: ":", with: "-")
         let dir = Self.recordingsDir.appendingPathComponent(id)
@@ -53,7 +84,14 @@ final class Recorder {
             dir.appendingPathComponent("audio.wav").path,
         ]
         p.standardInput = Pipe()
-        p.standardError = Pipe()
+        let errPipe = Pipe()
+        p.standardError = errPipe
+        errorText = ""
+        errPipe.fileHandleForReading.readabilityHandler = { [weak self] h in
+            let d = h.availableData
+            guard !d.isEmpty, let s = String(data: d, encoding: .utf8) else { return }
+            self?.errorText += s
+        }
         let levels = Pipe()
         p.standardOutput = levels
         try p.run()
@@ -68,15 +106,38 @@ final class Recorder {
     /// Ukončí nahrávání a vrátí celou nahrávku k přepisu.
     func stop() -> URL? {
         poller?.invalidate(); poller = nil
-        if let p = process, p.isRunning, let input = p.standardInput as? Pipe {
-            input.fileHandleForWriting.write("q".data(using: .utf8)!)   // ffmpeg končí čistě
-            p.waitUntilExit()
+        if let p = process, p.isRunning {
+            // "q" ukončí ffmpeg čistě (dopíše hlavičku WAV). Kdyby nezareagoval,
+            // NESMÍ se čekat donekonečna — stop() běží na hlavním vlákně
+            // a appka by zamrzla.
+            if let input = p.standardInput as? Pipe {
+                try? input.fileHandleForWriting.write(contentsOf: Data("q\n".utf8))
+                try? input.fileHandleForWriting.close()
+            }
+            let deadline = Date().addingTimeInterval(2.0)
+            while p.isRunning && Date() < deadline {
+                usleep(20_000)
+            }
+            if p.isRunning {
+                p.terminate()                       // hlavička může chybět,
+                usleep(200_000)                     // ale zvuk je na disku
+                if p.isRunning { kill(p.processIdentifier, SIGKILL) }
+            }
         }
         process = nil
         onLevel = nil
         defer { session = nil }
 
-        return chunks().last
+        (process?.standardError as? Pipe)?.fileHandleForReading.readabilityHandler = nil
+        let file = chunks().last
+        if file == nil {
+            lastError = errorText.isEmpty
+                ? "ffmpeg nezapsal žádný zvuk — zkontroluj mikrofon."
+                : errorText.split(separator: "\n").last.map(String.init) ?? errorText
+        } else {
+            lastError = nil
+        }
+        return file
     }
 
     /// Čte RMS v dBFS z ffmpegu a převádí na 0…1 pro ukazatel.

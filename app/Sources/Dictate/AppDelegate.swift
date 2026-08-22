@@ -31,7 +31,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             """.data(using: .utf8)!)
         }
 
-        hotkey.key = config.key
+        hotkey.trigger = config.trigger
+        hotkey.mode = config.hotkeyMode
         hotkey.onKeyDetected = { [weak self] in
             guard let self else { return }
             mainWindow.keyPressCount += 1
@@ -41,7 +42,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkey.onRelease = { [weak self] in self?.endDictation() }
 
         if let mic = MicPicker.pick() { micName = mic.name }
+        // Mikrofon: bez oprávnění ffmpeg jen visí a nevytvoří soubor, takže
+        // by diktát tiše skončil prázdným textem. Radši se zeptat hned.
+        if !Recorder.micAuthorized {
+            Recorder.requestMicAccess { [weak self] _ in self?.syncWindow() }
+        }
         mainWindow.onGrantClicked = { [weak self] in self?.requestPermission() }
+        mainWindow.onRegenerate = { [weak self] entry, fromAudio in
+            self?.rework(entry, fromAudio: fromAudio)
+        }
         syncWindow()
         armHotkey()
         buildMenu()
@@ -56,8 +65,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private var hotkeyLabel: String {
-        (config.key == .leftOption ? "levý" : "pravý") + " ⌥"
+    private var hotkeyLabel: String { config.trigger.label }
+    private var hotkeyHelp: String { config.hotkeyMode.help }
+
+    /// Spuštění už běžící aplikace (Spotlight, Dock, druhé `open`) okno otevře.
+    /// Bez tohoto by se uživatel k oknu dostal jen přes ikonku v liště —
+    /// a ta na plné liště s výřezem nemusí být vidět.
+    func applicationShouldHandleReopen(_ sender: NSApplication,
+                                       hasVisibleWindows flag: Bool) -> Bool {
+        showSetup()
+        return true
     }
 
     /// Zkusí zapnout odchyt klávesy. Když chybí oprávnění, NEBLOKUJE —
@@ -138,7 +155,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try daemon.connect()
             sessionID = try daemon.start()
             recorder.onLevel = { [weak self] level in self?.hud.update(level: level) }
-            recorder.chunkSeconds = config.chunkSeconds
             _ = try recorder.start(micIndex: mic.index)
             hud.show(.listening)
             render(.recording)
@@ -146,7 +162,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             sessionID = nil
             lastLine = error.localizedDescription
+            mainWindow.note("⚠️  " + error.localizedDescription)
             render(.error)
+            hud.hide()
         }
         buildMenu()
     }
@@ -171,8 +189,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case .success(let reply):
                     let text = reply.text ?? ""
                     if text.isEmpty {
-                        self.lastLine = "Nic jsem neslyšel"
-                        self.render(.idle)
+                        // Prázdný výsledek má dvě různé příčiny a uživatel
+                        // musí vědět, o kterou jde.
+                        let why = self.recorder.lastError ?? "Nic jsem neslyšel"
+                        self.lastLine = why
+                        self.mainWindow.note("⚠️  " + why)
+                        self.render(.error)
                     } else {
                         TextInserter.insert(text)
                         let t = reply.timing
@@ -229,27 +251,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         menu.addItem(.separator())
         menu.addItem(disabled("Mikrofon: \(micName)"))
-        menu.addItem(disabled("Zkratka: podrž \(hotkeyLabel)"))
+        menu.addItem(disabled("Zkratka: \(hotkeyHelp) \(hotkeyLabel)"))
         menu.addItem(.separator())
-
-        let entries = History.recent()
-        if entries.isEmpty {
-            menu.addItem(disabled("Zatím žádné diktáty"))
-        } else {
-            let sub = NSMenu()
-            let fmt = DateFormatter()
-            fmt.dateFormat = "d. M. HH:mm"
-            for (i, e) in entries.enumerated() {
-                let item = NSMenuItem(title: "\(fmt.string(from: e.date))  \(e.preview)",
-                                      action: #selector(copyHistory(_:)), keyEquivalent: "")
-                item.tag = i
-                item.target = self
-                sub.addItem(item)
-            }
-            let root = NSMenuItem(title: "Historie (\(entries.count))", action: nil, keyEquivalent: "")
-            root.submenu = sub
-            menu.addItem(root)
-        }
 
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Otevřít okno Dictate…",
@@ -272,15 +275,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return i
     }
 
-    /// Klik na položku historie zkopíruje text do schránky.
-    /// Záměrně nevkládá — v době kliknutí je aktivní menu, ne cílová appka.
-    @objc private func copyHistory(_ sender: NSMenuItem) {
-        let entries = History.recent()
-        guard sender.tag < entries.count else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(entries[sender.tag].text, forType: .string)
-        lastLine = "Zkopírováno do schránky"
-        buildMenu()
+    /// Přegenerování běží mimo hlavní vlákno — přepis z audia trvá sekundy
+    /// a okno by mezitím zamrzlo.
+    private func rework(_ entry: History.Entry, fromAudio: Bool) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let client = DaemonClient()
+            var result: Result<String, Error>
+            do {
+                try client.connect()
+                result = .success(try client.rework(file: entry.file.path, fromAudio: fromAudio))
+            } catch {
+                result = .failure(error)
+            }
+            client.close()
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let text):
+                    self.mainWindow.reload()
+                    self.mainWindow.note(text.isEmpty ? "Nic se nezměnilo" : "✅  Hotovo")
+                case .failure(let e):
+                    self.mainWindow.note("Nepovedlo se: \(e.localizedDescription)")
+                }
+            }
+        }
     }
 
     @objc private func showSetup() {
@@ -295,7 +313,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainWindow.needsPermission = needsPermission
         mainWindow.isArmed = hotkeyArmed
         mainWindow.hotkeyLabel = hotkeyLabel
+        mainWindow.hotkeyHelp = hotkeyHelp
         mainWindow.micName = micName
+        mainWindow.micAuthorized = Recorder.micAuthorized
         mainWindow.refresh()
     }
 

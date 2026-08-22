@@ -100,6 +100,13 @@ final class DaemonClient {
         _ = try send(["cmd": "chunk", "session": session, "path": path])
     }
 
+    /// Znovu pustí úpravu textu (levné) nebo celý přepis z audia (dražší).
+    func rework(file: String, fromAudio: Bool) throws -> String {
+        let raw = try send(["cmd": fromAudio ? "retranscribe" : "regenerate", "file": file])
+        if let e = raw["error"] as? String { throw Failure.daemon(e) }
+        return raw["text"] as? String ?? ""
+    }
+
     func finish(session: String, tail: String?) throws -> FinishReply {
         var msg: [String: Any] = ["cmd": "finish", "session": session]
         if let tail { msg["path"] = tail }
