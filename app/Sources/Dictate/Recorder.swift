@@ -64,8 +64,25 @@ final class Recorder {
         }
     }
 
+    /// Rozjezd avfoundation vstupu trvá ~0,29 s a ukousne první slovo.
+    /// Nahrávání proto startuje hned na stisk klávesy; jestli se z toho
+    /// nakonec diktát stane, se rozhodne až potom (`discardIfUnconfirmed`).
+    private var confirmed = false
+
+    func confirm() { confirmed = true }
+
+    /// Zahodí rozjeté nahrávání, ze kterého diktát nebyl (jedno ťuknutí
+    /// místo dvojitého, ⌥ jako součást zkratky).
+    func discardIfUnconfirmed() {
+        guard !confirmed, process != nil else { return }
+        let dir = session?.dir
+        _ = stop()
+        if let dir { try? FileManager.default.removeItem(at: dir) }
+    }
+
     func start(micIndex: Int) throws -> Session {
         guard Self.micAuthorized else { throw Failure.noMicAccess }
+        confirmed = false
         let id = ISO8601DateFormatter().string(from: Date())
             .replacingOccurrences(of: ":", with: "-")
         let dir = Self.recordingsDir.appendingPathComponent(id)
@@ -154,8 +171,11 @@ final class Recorder {
                     buffer = String(buffer[buffer.index(after: nl)...])
                     guard let r = line.range(of: "RMS_level="),
                           let db = Double(line[r.upperBound...]) else { continue }
-                    // -50 dBFS = ticho, -10 = hlasitá řeč
-                    let norm = min(max((db + 50) / 40, 0), 1)
+                    // Škála podle skutečně naměřených hodnot z tohohle mikrofonu:
+                    // ticho vychází kolem -95 dBFS, běžná řeč -43, špičky -28.
+                    // Původní rozsah (-50…-10) držel řeč pod polovinou stupnice,
+                    // takže ukazatel vypadal netečně.
+                    let norm = min(max((db + 55) / 27, 0), 1)
                     DispatchQueue.main.async { self?.onLevel?(norm) }
                 }
             }

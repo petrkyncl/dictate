@@ -54,9 +54,20 @@ if CommandLine.arguments.contains("--selftest") {
         let sid = try client.start()
         let session = try rec.start(micIndex: mic.index)
         print("nahrávám \(Int(seconds)) s do \(session.dir.path)…")
-        rec.onLevel = { _ in }
-        Thread.sleep(forTimeInterval: seconds)
+        var samples: [Double] = []
+        rec.onLevel = { samples.append($0) }
+        // RunLoop, ne Thread.sleep — hodnoty hlasitosti chodí přes hlavní
+        // frontu a spící vlákno by je nikdy nezpracovalo.
+        RunLoop.current.run(until: Date().addingTimeInterval(seconds))
         let tail = rec.stop()
+        if samples.isEmpty {
+            print("hlasitost: ŽÁDNÁ DATA ⚠")
+        } else {
+            let lo = samples.min() ?? 0, hi = samples.max() ?? 0
+            let avg = samples.reduce(0, +) / Double(samples.count)
+            print(String(format: "hlasitost: %d vzorků, min %.2f, max %.2f, průměr %.2f",
+                         samples.count, lo, hi, avg))
+        }
         print("soubor: \(tail?.lastPathComponent ?? "ŽÁDNÝ ⚠")")
         if let t = tail {
             let size = (try? FileManager.default.attributesOfItem(atPath: t.path)[.size] as? Int) ?? 0

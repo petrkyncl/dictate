@@ -10,10 +10,12 @@ final class RecordingHUD {
         case listening
         case thinking
 
+        /// Popisek jen tam, kde nese informaci. Při nahrávání uživatel ví,
+        /// že mluví — číst si u toho „Poslouchám" je zbytečné, stačí čas.
         var label: String {
             switch self {
-            case .listening: "Poslouchám"
-            case .thinking: "Přepisuji"
+            case .listening: ""
+            case .thinking: "přepisuji"
             }
         }
     }
@@ -71,7 +73,7 @@ final class RecordingHUD {
             return
         }
         let s = Int(Date().timeIntervalSince(start))
-        label.stringValue = String(format: "%@  %d:%02d", mode.label, s / 60, s % 60)
+        label.stringValue = String(format: "%d:%02d", s / 60, s % 60)
     }
 
     func hide() {
@@ -88,7 +90,7 @@ final class RecordingHUD {
     // MARK: - Sestavení
 
     private func build() {
-        let size = NSSize(width: 214, height: 46)
+        let size = NSSize(width: 150, height: 44)
         let p = NSPanel(contentRect: NSRect(origin: .zero, size: size),
                         styleMask: [.borderless, .nonactivatingPanel],
                         backing: .buffered, defer: false)
@@ -109,10 +111,10 @@ final class RecordingHUD {
         blur.layer?.cornerRadius = size.height / 2
         blur.layer?.masksToBounds = true
 
-        let m = MeterView(frame: NSRect(x: 20, y: 12, width: 56, height: 22))
+        let m = MeterView(frame: NSRect(x: 22, y: 11, width: 56, height: 22))
         let t = NSTextField(labelWithString: "")
-        t.frame = NSRect(x: 86, y: 14, width: 116, height: 18)
-        t.font = .systemFont(ofSize: 13, weight: .medium)
+        t.frame = NSRect(x: 84, y: 13, width: 52, height: 18)
+        t.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
         t.alignment = .left
         t.textColor = .labelColor
 

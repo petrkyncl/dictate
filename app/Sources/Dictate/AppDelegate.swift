@@ -16,6 +16,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var needsPermission = false
     private var permissionWatch: Timer?
     private var setupRefresh: Timer?
+    private var discardTimer: Timer?
+    private var pendingSession: String?
+    private var capturing = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Config.writeDefault()
@@ -37,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             mainWindow.keyPressCount += 1
             mainWindow.refresh()
+            prewarm()
         }
         hotkey.onPress = { [weak self] in self?.beginDictation() }
         hotkey.onRelease = { [weak self] in self?.endDictation() }
@@ -144,8 +148,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Diktát
 
+    /// Rozjezd mikrofonu trvá ~0,29 s a ukousl by první slovo. Nahrává se
+    /// proto hned od stisku; teprve když se potvrdí (držení přes práh nebo
+    /// druhé ťuknutí), stane se z toho diktát. Jinak se záznam zahodí.
+    private func prewarm() {
+        guard !busy, sessionID == nil, !capturing else { return }
+        guard let mic = MicPicker.pick() else { return }
+        micName = mic.name
+        do {
+            daemon = DaemonClient()
+            try daemon.connect()
+            let sid = try daemon.start()
+            recorder.onLevel = { [weak self] level in self?.hud.update(level: level) }
+            _ = try recorder.start(micIndex: mic.index)
+            pendingSession = sid
+            capturing = true
+            // Když se do vteřiny nepotvrdí, byl to jiný stisk než diktát.
+            discardTimer?.invalidate()
+            discardTimer = Timer.scheduledTimer(withTimeInterval: 1.2, repeats: false) {
+                [weak self] _ in self?.discardPrewarm()
+            }
+        } catch {
+            capturing = false
+            pendingSession = nil
+            mainWindow.note("⚠️  " + error.localizedDescription)
+            lastLine = error.localizedDescription
+            render(.error)
+            buildMenu()
+        }
+    }
+
+    private func discardPrewarm() {
+        discardTimer?.invalidate(); discardTimer = nil
+        guard capturing, sessionID == nil else { return }
+        recorder.discardIfUnconfirmed()
+        daemon.close()
+        capturing = false
+        pendingSession = nil
+    }
+
     private func beginDictation() {
         guard !busy else { return }
+        discardTimer?.invalidate(); discardTimer = nil
+
+        // Nahrávání už běží z prewarmu — jen se potvrdí.
+        if capturing, let sid = pendingSession {
+            recorder.confirm()
+            sessionID = sid
+            pendingSession = nil
+            hud.show(.listening)
+            render(.recording)
+            lastLine = "Nahrávám…"
+            buildMenu()
+            return
+        }
         guard let mic = MicPicker.pick() else {
             lastLine = "Nenašel jsem mikrofon"; render(.error); buildMenu(); return
         }
@@ -170,8 +226,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func endDictation() {
-        guard let sid = sessionID else { return }
+        guard let sid = sessionID else {
+            discardPrewarm()          // ťuknutí, ze kterého diktát nebyl
+            return
+        }
         sessionID = nil
+        capturing = false
         busy = true
         hud.show(.thinking)
         render(.thinking)

@@ -17,6 +17,22 @@ echo "▸ kompiluji ($CONFIG)…"
 swift build -c "$CONFIG"
 BIN=$(swift build -c "$CONFIG" --show-bin-path)/Dictate
 
+# POJISTKA: SwiftPM uz jednou vratil pro release starou binarku z cache
+# a build.sh vesele nainstaloval kod, ktery neodpovidal zdrojaku. Chyba
+# se hledala pul hodiny v uplne jinych mistech. Kdyz je binarka starsi
+# nez nejnovejsi zdrojak, vynuti se cisty build.
+NEWEST_SRC=$(find Sources Package.swift -type f -newer "$BIN" 2>/dev/null | head -1)
+if [ -n "$NEWEST_SRC" ]; then
+    echo "   ⚠ binárka je starší než $NEWEST_SRC — kompiluji načisto"
+    rm -rf "$(dirname "$BIN")"
+    swift build -c "$CONFIG"
+    STILL=$(find Sources Package.swift -type f -newer "$BIN" 2>/dev/null | head -1)
+    if [ -n "$STILL" ]; then
+        echo "   ✗ ani po čistém buildu není binárka aktuální — build selhal"
+        exit 1
+    fi
+fi
+
 echo "▸ skládám bundle…"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
