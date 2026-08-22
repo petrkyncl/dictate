@@ -138,11 +138,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try daemon.connect()
             sessionID = try daemon.start()
             recorder.onLevel = { [weak self] level in self?.hud.update(level: level) }
-            recorder.onChunk = { [weak self] url in
-                guard let self, let sid = self.sessionID else { return }
-                // Přepis běží už během mluvení — po puštění klávesy zbyde jen ocas.
-                try? self.daemon.chunk(session: sid, path: url.path)
-            }
             recorder.chunkSeconds = config.chunkSeconds
             _ = try recorder.start(micIndex: mic.index)
             hud.show(.listening)

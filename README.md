@@ -203,3 +203,33 @@ než kam `CGEventTap` dosáhne.
 **Proč ffmpeg a ne AVAudioEngine:** segmentový muxer zapisuje kousky na
 disk průběžně sám, takže „audio je na disku dřív, než se přepisuje" platí
 z principu. A přepis se rozjede už během mluvení.
+
+
+## Proč se nedělí nahrávka na kousky
+
+Kvůli latenci se nahrávka nějakou dobu řezala na 10s kousky, které se
+přepisovaly už během mluvení. Změřeno zpětně na korpusu
+([bench/chunking_cost.py](bench/chunking_cost.py)):
+
+| | vcelku | po 10s kouscích |
+|---|---|---|
+| slov | 3 010 | **1 812** (−40 %) |
+| halucinace | 2 | **75** |
+
+Dvě příčiny se sečetly: hranice padaly doprostřed slov, a normalizace
+hlasitosti puštěná na kousek plný ticha zesílí šum na úroveň řeči,
+do kterého pak Whisper halucinuje. To, co u celého souboru pomáhalo,
+po rozřezání aktivně škodí.
+
+**Poučení do příště: po každé optimalizaci latence znovu změřit kvalitu.**
+Chunking se zaváděl s měřením rychlosti, ale bez měření přesnosti.
+
+### Latence teď (přepis vcelku)
+
+| délka diktátu | ASR | LLM | celkem |
+|---|---|---|---|
+| 10 s | 1,00 s | 1,03 s | **2,04 s** |
+| 20 s | 2,22 s | 1,26 s | **3,49 s** |
+| 45 s | 4,08 s | 3,42 s | **7,50 s** |
+| 90 s | 8,58 s | 2,78 s | **11,37 s** |
+| 180 s | 14,26 s | 4,95 s | **19,21 s** |

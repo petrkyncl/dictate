@@ -66,7 +66,9 @@ ASR_PROMPT = (
     "Poznámky k práci: MationX, Passerelle, Internát.cz, TLD Hunter, kyncl.app. "
     "Stavíme SaaS a automatizace. Nasazujeme přes GitHub Actions na VPS, běží to "
     "pod PM2 za nginxem. Stack: Next.js, Vite, Node, TypeScript, React, Supabase, "
-    "Tailscale, Raspberry Pi, Cloudflare, Claude Code. Petr Kynčl, Poniklá, Attio."
+    "Tailscale, Raspberry Pi, Cloudflare, Claude Code. Petr Kynčl, Poniklá, Attio. "
+    "Píšeme diktovací aplikaci: Wispr Flow, Whisper, macOS Dictate, double press, "
+    "push-to-talk, hotkey, Accessibility, menu bar, Option, Xcode, Swift."
 )
 
 

@@ -1,18 +1,22 @@
 import Foundation
 
-/// Nahrává přes ffmpeg se segmentací na ~10s kousky.
+/// Nahrává přes ffmpeg do jednoho souboru, průběžně na disk.
 ///
-/// Proč ffmpeg a ne AVAudioEngine: segmentový muxer zapisuje kousky na disk
-/// průběžně sám, takže "audio je na disku dřív, než se přepisuje" platí
-/// z principu, ne díky naší pečlivosti. A přepis se rozjede už během mluvení.
+/// DŘÍV se nahrávka řezala na 10s kousky, aby se přepisovaly už během
+/// mluvení a po puštění klávesy zbyl jen zbytek. Změřeno na korpusu:
+/// stálo to 40 % slov (3010 → 1812) a halucinace vyskočily z 2 na 75.
+/// Dva důvody se sečetly — hranice padaly doprostřed slov, a normalizace
+/// hlasitosti puštěná na kousek plný ticha zesílí šum na úroveň řeči,
+/// do kterého pak Whisper halucinuje.
+///
+/// Latence se řeší až potom, co bude kvalita jistá.
 final class Recorder {
     struct Session {
         let id: String
         let dir: URL
     }
 
-    /// Přepsatelné z config.json — kratší kousek = menší zbytek po puštění klávesy.
-    var chunkSeconds = 10
+    var chunkSeconds = 10   // ponecháno pro budoucí dělení v tichu
     private var process: Process?
     private var session: Session?
     private var sent = Set<String>()
@@ -46,9 +50,7 @@ final class Recorder {
             // Levá ruka tak dává hlasitost pro indikátor, pravá píše kousky.
             "-af", "astats=metadata=1:reset=1,"
                  + "ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-",
-            "-f", "segment", "-segment_time", "\(chunkSeconds)",
-            "-reset_timestamps", "1",
-            dir.appendingPathComponent("chunk_%03d.wav").path,
+            dir.appendingPathComponent("audio.wav").path,
         ]
         p.standardInput = Pipe()
         p.standardError = Pipe()
@@ -60,15 +62,10 @@ final class Recorder {
         process = p
         session = Session(id: id, dir: dir)
         sent.removeAll()
-
-        // Kousek je hotový ve chvíli, kdy ffmpeg založí následující soubor.
-        poller = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.flushCompleted()
-        }
         return session!
     }
 
-    /// Ukončí nahrávání a vrátí poslední (dosud neodeslaný) kousek jako "ocas".
+    /// Ukončí nahrávání a vrátí celou nahrávku k přepisu.
     func stop() -> URL? {
         poller?.invalidate(); poller = nil
         if let p = process, p.isRunning, let input = p.standardInput as? Pipe {
@@ -79,13 +76,7 @@ final class Recorder {
         onLevel = nil
         defer { session = nil }
 
-        let remaining = chunks().filter { !sent.contains($0.lastPathComponent) }
-        // Všechny až na poslední pošli jako běžné kousky; poslední je ocas.
-        for url in remaining.dropLast() {
-            sent.insert(url.lastPathComponent)
-            onChunk?(url)
-        }
-        return remaining.last
+        return chunks().last
     }
 
     /// Čte RMS v dBFS z ffmpegu a převádí na 0…1 pro ukazatel.

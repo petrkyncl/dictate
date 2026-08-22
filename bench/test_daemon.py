@@ -33,26 +33,15 @@ def main():
         print("démon není připraven"); return 1
 
     sid = rpc(f, cmd="start")["session"]
-    print(f"diktát {total:.0f}s, kousky po {CHUNK}s")
+    print(f"diktát {total:.0f}s")
 
-    # kousky, ktere by se odeslaly uz behem mluveni
-    pos = 0.0
-    while pos + CHUNK <= total:
-        p = slice_wav(src, pos, CHUNK)
-        t0 = time.perf_counter()
-        rpc(f, cmd="chunk", session=sid, path=p)
-        print(f"   kousek {pos:.0f}–{pos+CHUNK:.0f}s přepsán za {time.perf_counter()-t0:.2f}s "
-              f"(běží během mluvení, uživatel to nevidí)")
-        Path(p).unlink(missing_ok=True)
-        pos += CHUNK
-
-    tail = slice_wav(src, pos, total - pos) if total - pos > 0.3 else None
-    print(f"\n── PUŠTĚNÍ KLÁVESY (zbývá {total-pos:.1f}s zvuku) ──")
+    # Appka posílá celou nahrávku najednou. Dělení na kousky se zrušilo:
+    # stálo 40 % slov a zněkolikanásobilo halucinace (bench/chunking_cost.py).
+    tail = src
+    print(f"\n── PUŠTĚNÍ KLÁVESY ({total:.0f}s zvuku k přepisu) ──")
     t0 = time.perf_counter()
     r = rpc(f, cmd="finish", session=sid, path=tail)
     wall = time.perf_counter() - t0
-    if tail:
-        Path(tail).unlink(missing_ok=True)
 
     if "error" in r:
         print("chyba:", r["error"]); return 1

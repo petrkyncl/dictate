@@ -34,6 +34,8 @@ TERM_FIXES: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\bmationx\b"), "MationX"),          # sjednoceni velikosti pismen
     (re.compile(r"\bMationx\b"), "MationX"),
     (re.compile(r"\bAt[iy]o\b"), "Attio"),
+    (re.compile(r"\b(?:Spr\s?flow|Whisper\s?flow|Wisper\s?flow|Visp\w*\s?flow)\b",
+                re.IGNORECASE), "Wispr Flow"),
     (re.compile(r"\btrichtýř(\w*)\b", re.IGNORECASE), r"trychtýř\1"),
     (re.compile(r"\bSAS\b"), "SaaS"),                 # verzalky = vzdy SaaS
     (re.compile(r"\bWPS\b"), "VPS"),
@@ -46,6 +48,8 @@ TERM_FIXES: list[tuple[re.Pattern, str]] = [
 # Necha se na LLM (regex by je rozbil):
 #   'níž' -> 'niche'   ... 'níž' je bezne ceske slovo
 #   'sasy/sasů/sase'   ... sklonovane tvary SaaS vs. skutecne slovo
+#   'WordPress'        ... uzivatel dela weby, WordPress zminuje doopravdy;
+#                          jestli mel na mysli 'double press', pozna jen kontext
 #   interpunkce        ... vyzaduje porozumeni vete
 LLM_TERRITORY = ("níž → niche", "sklonované tvary SaaS", "interpunkce", "velká písmena ve větě")
 

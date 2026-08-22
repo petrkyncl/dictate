@@ -31,6 +31,10 @@ Next.js · Vite · Node · TypeScript · React · Supabase · Python
 Google Play · Play Store · LinkedIn · Discord · Reddit · WhatsApp · Instagram
 Claude · Claude Code · Android · Samsung Galaxy S26 Ultra
 Petr Kynčl · Poniklá · Raspberry Pi · ASIN · Amazon
+Wispr Flow (konkurenční aplikace; ne „Sprflow", „Whisperflow", „Wisperflow")
+Whisper (model pro přepis) · macOS Dictate · Accessibility
+double press (dvojité ťuknutí; NIKDY ne „WordPress", „Wpress")
+push-to-talk · hotkey · menu bar · Option · Xcode · Swift · SwiftUI
 
 Anglická slovesa ohýbaná do češtiny — anglický kmen, česká koncovka:
 pushnout · pullnout · mergnout · deploynout · buildnout · commitnout
