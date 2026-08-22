@@ -5,7 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let hotkey = HotkeyMonitor()
     private let recorder = Recorder()
     private let hud = RecordingHUD()
-    private let setup = SetupWindow()
+    private let mainWindow = MainWindow()
     private var daemon = DaemonClient()
     private var sessionID: String?
     private var micName = "—"
@@ -34,22 +34,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkey.key = config.key
         hotkey.onKeyDetected = { [weak self] in
             guard let self else { return }
-            setup.keyPressCount += 1
-            setup.refreshLive(hotkeyLabel: hotkeyLabel)
+            mainWindow.keyPressCount += 1
+            mainWindow.refresh()
         }
         hotkey.onPress = { [weak self] in self?.beginDictation() }
         hotkey.onRelease = { [weak self] in self?.endDictation() }
 
         if let mic = MicPicker.pick() { micName = mic.name }
-        setup.onGrantClicked = { [weak self] in self?.requestPermission() }
+        mainWindow.onGrantClicked = { [weak self] in self?.requestPermission() }
+        syncWindow()
         armHotkey()
         buildMenu()
 
         // Okno se ukáže, jen když něco chybí. Když je vše v pořádku, appka
         // tiše sedí v liště a neotravuje.
         startSetupRefresh()
-        if needsPermission {
-            setup.show(needsPermission: true, hotkeyLabel: hotkeyLabel, mic: micName)
+        // Okno se ukáže při prvním spuštění a vždy, když něco chybí.
+        if needsPermission || !UserDefaults.standard.bool(forKey: "seenWindow") {
+            UserDefaults.standard.set(true, forKey: "seenWindow")
+            mainWindow.show()
         }
     }
 
@@ -78,19 +81,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             lastLine = "Odchyt klávesy se nezdařil (tap)"
             render(.error)
             buildMenu()
-            setup.isArmed = false
-            setup.refreshLive(hotkeyLabel: hotkeyLabel)
+            syncWindow()
             return
         }
         hotkeyArmed = true
-        setup.isArmed = true
         needsPermission = false
         permissionWatch?.invalidate()
         permissionWatch = nil
         lastLine = "Připraveno"
         render(.idle)
         buildMenu()
-        setup.refresh(needsPermission: false, hotkeyLabel: hotkeyLabel, mic: micName)
+        syncWindow()
         startSetupRefresh()
     }
 
@@ -112,15 +113,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let missing = !HotkeyMonitor.hasAccessibilityPermission(prompt: false)
             if missing != needsPermission {
                 needsPermission = missing
-                if missing { hotkeyArmed = false; setup.isArmed = false; armHotkey() }
+                if missing { hotkeyArmed = false; armHotkey() }
             }
-            setup.refresh(needsPermission: needsPermission,
-                          hotkeyLabel: hotkeyLabel, mic: micName)
+            syncWindow()
         }
     }
 
     @objc private func requestPermission() {
-        _ = HotkeyMonitor.hasAccessibilityPermission(prompt: true)
         NSWorkspace.shared.open(URL(string:
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
         startPermissionWatch()
@@ -186,6 +185,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         self.lastLine = String(format: "%d znaků · %.1f s · $%.4f",
                                                text.count, secs, reply.usd ?? 0)
                         self.render(.idle)
+                        self.mainWindow.reload()
                     }
                 case .failure(let e):
                     self.lastLine = e.localizedDescription
@@ -257,7 +257,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Stav a nápověda…",
+        menu.addItem(NSMenuItem(title: "Otevřít okno Dictate…",
                                 action: #selector(showSetup), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Nastavení…",
                                 action: #selector(openConfig), keyEquivalent: ","))
@@ -289,7 +289,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showSetup() {
-        setup.show(needsPermission: needsPermission, hotkeyLabel: hotkeyLabel, mic: micName)
+        syncWindow()
+        mainWindow.reload()
+        mainWindow.show()
+    }
+
+    /// Přenese aktuální stav do okna. Jedno místo, aby okno nikdy
+    /// nezůstalo viset na informaci, která už neplatí.
+    private func syncWindow() {
+        mainWindow.needsPermission = needsPermission
+        mainWindow.isArmed = hotkeyArmed
+        mainWindow.hotkeyLabel = hotkeyLabel
+        mainWindow.micName = micName
+        mainWindow.refresh()
     }
 
     @objc private func openConfig() {
