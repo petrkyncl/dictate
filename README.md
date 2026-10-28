@@ -1,5 +1,7 @@
 # dictate
 
+> **English:** push-to-talk dictation for macOS, tuned for Czech, as a replacement for Wispr Flow. Hold right Option, speak, release, and the text is typed where the cursor is. A Swift menu-bar app records, a local Python daemon transcribes and cleans up the text; `bench/` holds the accuracy and latency benchmarks. The rest of this README is in Czech.
+
 Diktovací appka pro macOS, optimalizovaná na češtinu. Náhrada za Wispr Flow.
 
 **Cíl:** držíš pravé ⌥ → mluvíš → pustíš → text je vložený tam, kde je kurzor.
